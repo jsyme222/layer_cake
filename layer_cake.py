@@ -74,11 +74,13 @@ class Decorator:
 
         return img_2, img_final, pixels_new
 
-    def create_gradient_from_css(self):
+    def create_gradient_from_css(self, style=None):
+        if not style:
+            style = self.style
         try:
             # Clean the css data, *hopefully* any non-css is caught here
             # to verify style type
-            css = self.style
+            css = style
             rules = css.split(';')
             final_css = rules[-2]
             final_gradient = []
@@ -107,72 +109,57 @@ class Decorator:
                     perc if perc > 0 else 1
                 )
             )
+        self.style = final_gradient
         return final_gradient
 
-    def apply_gradient(self):
+    def apply_gradient(self, color, start=0, stop=255):
         img_2, img_final, pixels_new = self.create_pixel_map()
-        gradient_values = self.create_gradient_from_css()
-        if gradient_values:
-            for i in range(img_2.size[0]):
-                for j in range(img_2.size[1]):
-                    if pixels_new[i, j] != (0, 0, 0, 255):
-                        pix = min(pixels_new[i, j])
-                        index = 0
-                        while index <= len(gradient_values):
-                            try:
-                                next_point = gradient_values[index + 1][1]
-                            except IndexError:
-                                next_point = 255
-                            print(gradient_values[index], index)
-                            if gradient_values[index][1] < pix < next_point:
-                                img_final[i, j] = gradient_values[index][0]
-                            index += 1
 
-                    else:
-                        if pixels_new[i, j] == (0, 0, 0, 255):
-                            img_final[i, j] = (0, 0, 0, 0)
-                        else:
-                            img_final[i, j] = pixels_new[i, j]
-
-        img_2.show()
-        self.final_image = img_final
-        return img_2
-
-    def create_color_layer(self, color=None):
-
-        if not color and self.style:
-            color = self.style
-
-        img_2, img_final, pixels_new = self.create_pixel_map()
+        if (type(color) == tuple) and (len(color) != 2):
+            color = (color, 255)
 
         for i in range(img_2.size[0]):
             for j in range(img_2.size[1]):
                 if pixels_new[i, j] != (0, 0, 0, 255):
                     pix = min(pixels_new[i, j])
-                    if pix < 30:
-                        pix = -pix
-                    if 35 < pix:
-                        print("found")
-                        pix = int(100 * (pix / 255))
-                        print(shaded(color, pix))
-                        img_final[i, j] = shaded(color, pix)
+                    if pix > 25:
+                        if start < pix <= stop:
+                            perc = int(100 * (pix / 255))
+                            img_final[i, j] = shaded(color[0], perc)
                     else:
-                        img_final[i, j] = shaded(pixels_new[i, j], 40)
+                        img_final[i, j] = shaded(pixels_new[i, j], -40)
                 else:
-                    if pixels_new[i, j] == (0, 0, 0, 255):
-                        img_final[i, j] = (0, 0, 0, 0)
-                    else:
-                        img_final[i, j] = pixels_new[i, j]
+                    img_final[i, j] = (0, 0, 0, 0)
 
-        img_2.show()
-        self.final_image = img_2
         return img_2
 
-    def decorate(self):
-        if not self.create_gradient_from_css():
-            self.create_color_layer(self.style)
+    def map_gradient(self, style=None):
+
+        if not style:
+            style = self.style
+        if len(style) >= 1:
+            for grad in style:
+                print(grad)
+
+
+    def single_color_gradient(self, color=None):
+
+        if not color and self.style:
+            color = self.style
+
+        decorated_image = self.apply_gradient(color)
+
+        decorated_image.show()
+        self.final_image = decorated_image
+        return decorated_image
+
+    def decorate(self, style=None):
+        if not style:
+            style = self.style
+        if not (grad := self.create_gradient_from_css(style)):
+            self.single_color_gradient(style)
         else:
-            self.apply_gradient()
+            self.map_gradient(grad)
 
     def close(self):
         self.final_image.close()
@@ -308,6 +295,6 @@ CSS = '''background: -webkit-linear-gradient(top,
 
 if __name__ == '__main__':
     layer1 = 'images/demo/layer1.png'
-    green = (64, 66, 99, 255)
-    d = Decorator(layer1, CSS)
-    d.decorate()
+    green = (64, 100, 99, 255)
+    d = Decorator(layer1)
+    d.decorate(CSS)
