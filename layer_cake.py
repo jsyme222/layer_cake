@@ -5,18 +5,49 @@ import re
 from PIL import Image
 
 
+def normalize_rgba(value):
+    value = int(round(value))
+    val = 0
+    if 0 < value < 255:
+        val = value
+    if 255 < value:
+        val = 255
+
+    return val
+
+
+def shaded(c, p):
+    """
+    Returns the rgba value for the color (c) shifted to a given percent (p)
+    Alpha is 0-255
+    :param c: str(r, g, b, a)
+    :param p: int(<percent-to-shift>)
+    :return: str(r, g, b, a)
+    """
+    cleaned = [normalize_rgba(x) for x in c[:-1]]
+    r, g, b = cleaned
+    R = r * (100 + p) / 100
+    G = g * (100 + p) / 100
+    B = b * (100 + p) / 100
+    R, G, B = [normalize_rgba(x) for x in [R, G, B]]
+    rgba = (R, G, B, 255)
+    return rgba
+
+
 class Decorator:
     """
-    The decorator class was intended to apply gradients but up until this
-    point it simply recolors each pixel pf the png according to the supplied
-    color to the create_color_layer method
+    The decorator class applies gradients to png images by copying the image and coloring
+    each pixel accordingly. Can map multi-color gradients based upon percentage or map
+    a single color gradient to any greyscale image.
     """
 
     def __init__(self, image, style=None):
         """
-        Creates an Image object from the supplied image path
-        :param image: => str() | Image path to image
-        :param gradient: => str() css code created by psd gradient uploader
+        Creates an Image object from the supplied image path if Image object is not supplied.
+        Style can be str() of css rules creating a gradient, or a tuple() containing the rgba
+        values of a single color.
+        :param image: str() | <Image>
+        :param style: str() | tuple(r,g ,b, a)
         """
         try:
             self.image = Image.open(image)
@@ -24,25 +55,41 @@ class Decorator:
             self.image = image
         self.final_image = ""
         self.style = style
-        self.breakpoint_count = 0
-        self.value = 1
+
+    def create_pixel_map(self):
+        pixel_map = self.image.load()
+
+        img = Image.new(self.image.mode, self.image.size)
+        pixels_new = img.load()
+        for i in range(img.size[0]):
+            for j in range(img.size[1]):
+                if 0 in pixel_map[i, j]:
+                    pixels_new[i, j] = (0, 0, 0, 255)
+                else:
+                    pixels_new[i, j] = pixel_map[i, j]
+
+        img_2 = Image.new(img.mode, img.size)
+        img_final = img_2.load()
+        img.close()
+
+        return img_2, img_final, pixels_new
 
     def create_gradient_from_css(self):
         try:
             # Clean the css data, *hopefully* any non-css is caught here
             # to verify style type
-            css = self.gradient
+            css = self.style
             rules = css.split(';')
             final_css = rules[-2]
             final_gradient = []
             first_clean = final_css.split('rgba')[1:]
-        except (ValueError, IndexError) as e:
+        except (AttributeError, ValueError) as e:
             print("Not a gradient style;\nContinuing;")
             return False
 
         for value in first_clean:
             value = value.split('\n')[0]
-            x = re.split('(\))', value)
+            x = re.split('(\\))', value)
             rgb = " ".join(x[:2])
             perc = int((x[2].split("%")[0].lstrip()).split('.')[0])
             rgb = rgb.split(',')
@@ -60,109 +107,75 @@ class Decorator:
                     perc if perc > 0 else 1
                 )
             )
-        self.breakpoint_count = len(final_gradient)
         return final_gradient
 
     def apply_gradient(self):
-        pixels = self.image.load()
-        image_new = Image.new(self.image.mode, self.image.size)  # New copied image to return
-        pixels_new = image_new.load()
+        img_2, img_final, pixels_new = self.create_pixel_map()
         gradient_values = self.create_gradient_from_css()
         if gradient_values:
-            for x in range(len(gradient_values) - 1):
-                self.value = gradient_values[x][1]
-                rgb, perc = gradient_values[x]
-                key = 3 * perc
-                for i in range(image_new.size[0]):
-                    for j in range(image_new.size[1]):
-                        for pix in pixels[i, j]:
-                            print(key, self.value)
-                            if pix in range(key, self.value):
-                                pixels[i, j] = rgb
-                            else:
-                                pixels_new[i, j] = pixels[i, j]
+            for i in range(img_2.size[0]):
+                for j in range(img_2.size[1]):
+                    if pixels_new[i, j] != (0, 0, 0, 255):
+                        pix = min(pixels_new[i, j])
+                        index = 0
+                        while index <= len(gradient_values):
                             try:
-                                self.value = gradient_values[x + 2][1]
+                                next_point = gradient_values[index + 1][1]
                             except IndexError:
-                                self.value = 255
+                                next_point = 255
+                            print(gradient_values[index], index)
+                            if gradient_values[index][1] < pix < next_point:
+                                img_final[i, j] = gradient_values[index][0]
+                            index += 1
 
-        image_new.show()
-        image_new.close()
+                    else:
+                        if pixels_new[i, j] == (0, 0, 0, 255):
+                            img_final[i, j] = (0, 0, 0, 0)
+                        else:
+                            img_final[i, j] = pixels_new[i, j]
+
+        img_2.show()
+        self.final_image = img_final
+        return img_2
 
     def create_color_layer(self, color=None):
 
-        def shaded(c, p):
-            """
-            Returns the rgba value for the color (c) shifted to a given percent (p)
-            Alpha is 0-255
-            :param c: str() -> (r, g, b, a)
-            :param p:
-            :return:
-            """
-            rgba = list(c)
-            cleaned = map(lambda x: x if 0 < x else 1, rgba)
-            r, g, b, a = cleaned
-            R = r * (100 + p) / 100
-            G = g * (100 + p) / 100
-            B = b * (100 + p) / 100
-            R, G, B = map(lambda x: round(x) if x <= 255 else 255, [R, G, B])
-            rgba = (R, G, B, a)
-            return rgba
+        if not color and self.style:
+            color = self.style
 
-        pixelMap = self.image.load()
-
-        img = Image.new(self.image.mode, self.image.size)
-        pixelsNew = img.load()
-        for i in range(img.size[0]):
-            for j in range(img.size[1]):
-                if 0 in pixelMap[i, j]:
-                    pixelsNew[i, j] = (0, 0, 0, 255)
-                else:
-                    pixelsNew[i, j] = pixelMap[i, j]
-
-        img_2 = Image.new(img.mode, img.size)
-        img_final = img_2.load()
+        img_2, img_final, pixels_new = self.create_pixel_map()
 
         for i in range(img_2.size[0]):
             for j in range(img_2.size[1]):
-                if pixelsNew[i, j] != (0, 0, 0, 255):
-                    if 50 < min(pixelsNew[i, j]) <= 60:
-                        img_final[i, j] = shaded(color, -50)
-                    if 60 < min(pixelsNew[i, j]) <= 70:
-                        img_final[i, j] = shaded(color, -30)
-                    if 70 < min(pixelsNew[i, j]) <= 80:
-                        img_final[i, j] = shaded(color, -20)
-                    elif 80 < min(pixelsNew[i, j]) <= 100:
-                        img_final[i, j] = color
-                    elif 100 < min(pixelsNew[i, j]) <= 140:
-                        img_final[i, j] = shaded(color, 10)
-                    elif 140 < min(pixelsNew[i, j]) <= 180:
-                        img_final[i, j] = shaded(color, 20)
-                    elif 180 < min(pixelsNew[i, j]) <= 220:
-                        img_final[i, j] = shaded(color, 30)
-                    elif 220 < min(pixelsNew[i, j]) <= 255:
-                        img_final[i, j] = shaded(color, 40)
-                    elif min(pixelsNew[i, j]) > 220:
-                        img_final[i, j] = color
+                if pixels_new[i, j] != (0, 0, 0, 255):
+                    pix = min(pixels_new[i, j])
+                    if pix < 30:
+                        pix = -pix
+                    if 35 < pix:
+                        print("found")
+                        pix = int(100 * (pix / 255))
+                        print(shaded(color, pix))
+                        img_final[i, j] = shaded(color, pix)
                     else:
-                        img_final[i, j] = pixelsNew[i, j]
+                        img_final[i, j] = shaded(pixels_new[i, j], 40)
                 else:
-                    if pixelsNew[i, j] == (0, 0, 0, 255):
+                    if pixels_new[i, j] == (0, 0, 0, 255):
                         img_final[i, j] = (0, 0, 0, 0)
                     else:
-                        img_final[i, j] = pixelsNew[i, j]
+                        img_final[i, j] = pixels_new[i, j]
 
-        img.close()
         img_2.show()
         self.final_image = img_2
         return img_2
 
     def decorate(self):
         if not self.create_gradient_from_css():
-            pass
+            self.create_color_layer(self.style)
         else:
             self.apply_gradient()
-        self.create_color_layer()
+
+    def close(self):
+        self.final_image.close()
 
     def save(self, path="", title=""):
         self.image.close()
@@ -190,26 +203,26 @@ class Cake:
         self.baked_image = None
         self.thumbnail = None
 
+    def create_thumbnail(self, image):
+        image.load()
+        image_data = np.asarray(image)
+        image_data_bw = image_data.take(3, axis=2)
+        non_empty_columns = np.where(image_data_bw.max(axis=0) > 0)[0]
+        non_empty_rows = np.where(image_data_bw.max(axis=1) > 0)[0]
+        crop_box = (
+            min(non_empty_rows),
+            max(non_empty_rows),
+            min(non_empty_columns),
+            max(non_empty_columns)
+        )
+        image_data_new = image_data[crop_box[0]:crop_box[1] + 1, crop_box[2]:crop_box[3] + 1, :]
+
+        new_image = Image.fromarray(image_data_new)
+        new_image.crop(crop_box)
+        new_image.show()
+        return new_image
+
     def bake(self):
-
-        def create_thumbnail(image):
-            image.load()
-            image_data = np.asarray(image)
-            image_data_bw = image_data.take(3, axis=2)
-            non_empty_columns = np.where(image_data_bw.max(axis=0) > 0)[0]
-            non_empty_rows = np.where(image_data_bw.max(axis=1) > 0)[0]
-            crop_box = (
-                min(non_empty_rows),
-                max(non_empty_rows),
-                min(non_empty_columns),
-                max(non_empty_columns)
-            )
-            image_data_new = image_data[crop_box[0]:crop_box[1] + 1, crop_box[2]:crop_box[3] + 1, :]
-
-            new_image = Image.fromarray(image_data_new)
-            new_image.crop(crop_box)
-            new_image.show()
-            return new_image
 
         layers = self.layers
         while (layer_length := len(layers.keys())) > 1:
@@ -223,7 +236,7 @@ class Cake:
         final_image = layers[0]
         final_image.format = "PNG"
         self.baked_image = final_image
-        self.thumbnail = create_thumbnail(final_image)
+        self.thumbnail = self.create_thumbnail(final_image)
 
         return True
 
@@ -255,3 +268,46 @@ class Cake:
         self.thumbnail.save(thumbnail_path, 'PNG')
 
         return img_path, thumbnail_path
+
+
+CSS = '''background: -webkit-linear-gradient(top,
+    rgba(28, 0, 4, 1) 0%,
+    rgba(83, 0, 8, 1) 22.1923828125%,
+    rgba(128, 0, 31, 1) 37.255859375%,
+    rgba(187, 38, 61, 1) 58.6181640625%,
+    rgba(224, 67, 91, 1) 94.7998046875%
+  );
+  background: -moz-linear-gradient(top,
+    rgba(28, 0, 4, 1) 0%,
+    rgba(83, 0, 8, 1) 22.1923828125%,
+    rgba(128, 0, 31, 1) 37.255859375%,
+    rgba(187, 38, 61, 1) 58.6181640625%,
+    rgba(224, 67, 91, 1) 94.7998046875%
+  );
+  background: -o-linear-gradient(top,
+    rgba(28, 0, 4, 1) 0%,
+    rgba(83, 0, 8, 1) 22.1923828125%,
+    rgba(128, 0, 31, 1) 37.255859375%,
+    rgba(187, 38, 61, 1) 58.6181640625%,
+    rgba(224, 67, 91, 1) 94.7998046875%
+  );
+  background: -ms-linear-gradient(top,
+    rgba(28, 0, 4, 1) 0%,
+    rgba(83, 0, 8, 1) 22.1923828125%,
+    rgba(128, 0, 31, 1) 37.255859375%,
+    rgba(187, 38, 61, 1) 58.6181640625%,
+    rgba(224, 67, 91, 1) 94.7998046875%
+  );
+  linear-gradient(to bottom,
+    rgba(28, 0, 4, 1) 0%,
+    rgba(83, 0, 8, 1) 22.1923828125%,
+    rgba(128, 0, 31, 1) 37.255859375%,
+    rgba(187, 38, 61, 1) 58.6181640625%,
+    rgba(224, 67, 91, 1) 94.7998046875%
+  );'''
+
+if __name__ == '__main__':
+    layer1 = 'images/demo/layer1.png'
+    green = (64, 66, 99, 255)
+    d = Decorator(layer1, CSS)
+    d.decorate()
